@@ -408,23 +408,6 @@ class TritonServer(object):
         self.metrics["available_resource"].set(block_num * 1.0 /
                                                self.cfg.max_block_num)
 
-    def _get_current_server_info(self):
-        """
-        get server info
-        """
-        available_batch_size = min(self.cfg.max_prefill_batch,
-                                   self.engine.available_batch())
-        available_block_num = self.engine.available_block_num()
-        server_info = {
-            "block_size": int(self.cfg.block_size),
-            "block_num": int(available_block_num),
-            "dec_token_num": int(self.cfg.dec_token_num),
-            "available_resource":
-            1.0 * available_block_num / self.cfg.max_block_num,
-            "max_batch_size": int(available_batch_size),
-        }
-        return server_info
-
 
 def _send_result(result_dict, sender, end_flag=0):
     """

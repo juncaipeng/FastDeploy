@@ -27,10 +27,11 @@ import paddle.distributed as dist
 import paddle.distributed.fleet as fleet
 from paddlenlp.utils.llm_utils import get_rotary_position_embedding
 from paddlenlp_ops import step_paddle
+
 from server.data.processor import DataProcessor
 from server.engine.config import Config
 from server.utils import get_logger
-from task_queue_manager import TaskQueueManager
+from server.engine.task_queue_manager import TaskQueueManager
 
 File_Path = os.path.realpath(sys.argv[0])
 Dir_Path = os.path.dirname(File_Path)
