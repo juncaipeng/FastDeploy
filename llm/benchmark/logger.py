@@ -137,7 +137,7 @@ def get_logger(name, file_name=None):
     """
     if file_name is None:
         file_name = name + ".log"
-    log_dir = os.getenv("log_dir", default="log")
+    log_dir = os.getenv("log_dir", default="output")
     if not os.path.exists(log_dir):
         os.mkdir(log_dir)
 
