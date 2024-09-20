@@ -1,6 +1,16 @@
-"""
-测试的公共脚本。
-"""
+# Copyright (c) 2024 PaddlePaddle Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import json
 import os
@@ -15,42 +25,36 @@ from tritonclient.utils import *
 
 
 class OutputData:
-    """接收Triton服务返回的数据"""
     def __init__(self):
         self._completed_requests = queue.Queue()
 
 
 def triton_callback(output_data, result, error):
-    """Triton客户端的回调函数"""
     if error:
         output_data._completed_requests.put(error)
     else:
         output_data._completed_requests.put(result)
 
 def test_base(grpc_url, input_data, test_iters=1, log_level="simple"):
-    # 参数检查
     if log_level not in ["simple", "verbose"]:
         raise ValueError("log_level must be simple or verbose")
 
-    # 准备发送请求
     model_name = "model"
     inputs = [grpcclient.InferInput("IN", [1], np_to_triton_dtype(np.object_))]
     outputs = [grpcclient.InferRequestedOutput("OUT")]
     output_data = OutputData()
 
-    # 准备数据，发送请求，处理返回结果
     with grpcclient.InferenceServerClient(url=grpc_url, verbose=False) as triton_client:
         triton_client.start_stream(callback=partial(triton_callback, output_data))
         for i in range(test_iters):
             input_data = json.dumps([input_data])
             inputs[0].set_data_from_numpy(np.array([input_data], dtype=np.object_))
 
-            # 发送请求
             triton_client.async_stream_infer(model_name=model_name,
                                              inputs=inputs,
                                              request_id="{}".format(i),
                                              outputs=outputs)
-            # 处理返回结果
+
             print("output_data:")
             while True:
                 output_item = output_data._completed_requests.get(timeout=10)

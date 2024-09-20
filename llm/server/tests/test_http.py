@@ -8,8 +8,7 @@ import requests
 
 
 def http_no_stream(url, data):
-    """http协议非流式输出"""
-    print("--非流式接口--")
+    print("--http_no_stream--")
     headers = {'Content-Type': 'application/json'}
     #print(f"send req time: {datetime.now()}")
     #resp = httpx.post(url=url, headers=headers, timeout=300, json=data)
@@ -17,8 +16,7 @@ def http_no_stream(url, data):
     print(resp.text)
 
 def http_stream(url, data, show_chunk=False):
-    """http协议流式输出"""
-    print("--流式接口--")
+    print("--http_stream--")
     headers = {'Content-Type': 'application/json'}
     data = data.copy()
     data["stream"] = True
@@ -39,9 +37,6 @@ def http_stream(url, data, show_chunk=False):
         print(f"Result: {result}")
 
 def parse_args():
-    """
-    获取命令行参数
-    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--http_host", default="10.95.147.146", type=str, help="host to the http server")
     parser.add_argument("--http_port", default=8894, type=int, help="port to the http server")
@@ -53,7 +48,7 @@ if __name__ == '__main__':
     args = parse_args()
     url = f"http://{args.http_host}:{args.http_port}/v1/chat/completions"
     print(f"url: {url}")
-    print("\n\n=====单轮对话测试，返回正确结果=====")
+    print("\n\n=====single round test=====")
     data = {
         "req_id": str(uuid.uuid4()),
         "text": "hello",
@@ -70,7 +65,7 @@ if __name__ == '__main__':
     http_no_stream(url, data)
     http_stream(url, data)
 
-    print("\n\n=====单轮对话测试缺省参数，返回正确结果=====")
+    print("\n\n=====single round test with default params=====")
     data = {"text": "hello"}
     http_no_stream(url, data)
     http_stream(url, data)
