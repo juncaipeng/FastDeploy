@@ -25,7 +25,7 @@ from paddlenlp_ops import get_output
 from server.utils import datetime_diff, model_server_logger, monitor_logger
 
 
-class TokenProcessor(object):
+class OutProcessor(object):
     """
     get Token/Score from Paddle inference engine
     """

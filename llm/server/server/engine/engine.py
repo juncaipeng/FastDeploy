@@ -26,7 +26,7 @@ import numpy as np
 from server.engine.resource_manager import ResourceManager
 from server.engine.task_queue_manager import (TaskQueueManager,
                                               launch_task_queue_manager)
-from server.engine.token_processor import TokenProcessor
+from server.engine.out_processor import OutProcessor
 from server.utils import model_server_logger
 
 
@@ -37,8 +37,8 @@ class Engine(object):
     def __init__(self, cfg):
         self.cfg = cfg
         self.resource_manager = ResourceManager(self.cfg)
-        self.token_processor = TokenProcessor(self.cfg)
-        self.token_processor.set_resource_manager(self.resource_manager)
+        self.out_processor = OutProcessor(self.cfg)
+        self.out_processor.set_resource_manager(self.resource_manager)
 
         self._init_engine_flags()
 
@@ -273,11 +273,10 @@ class Engine(object):
         """
         p = multiprocessing.Process(target=launch_task_queue_manager, args=(self.cfg.infer_port, self.cfg.mp_num))
         p.start()
-        time.sleep(0.3)
         if p.is_alive():
             model_server_logger.info("start tasks queue service successfully")
         else:
-            error_msg = "Failed to start tasks queue service, please check " \
+            error_msg = "Failed to start task queue manager, please check " \
                         "the log/task_queue_manager.log for details"
             model_server_logger.info(error_msg)
             raise Exception(error_msg)

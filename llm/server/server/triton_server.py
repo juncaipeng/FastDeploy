@@ -288,7 +288,7 @@ class TritonServer(object):
         """
         while True:
             try:
-                batch_result = self.engine.token_processor.out_queue.get()
+                batch_result = self.engine.out_processor.out_queue.get()
                 for result in batch_result:
                     req_id = result["req_id"]
                     is_end = result.get("is_end", 0)

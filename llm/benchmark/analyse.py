@@ -197,7 +197,8 @@ def save_output_text(result_list, input_path):
                 output_text = ""
                 for i in output_list:
                     output_text += i['token']
-                dict_obj = {'req_id': result.req_id, 'input_text': result.input_text, 'output_text': output_text}
+                #dict_obj = {'req_id': result.req_id, 'input_text': result.input_text, 'output_text': output_text}
+                dict_obj = {'input_text': result.input_text, 'output_text': output_text}
                 out_file.write(json.dumps(dict_obj, ensure_ascii=False)   + "\n")
     print(f"output save in {output_path}")
 
