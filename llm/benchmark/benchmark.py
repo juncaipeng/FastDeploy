@@ -248,7 +248,7 @@ if __name__ == "__main__":
     print(f"data_queue size: {data_queue.qsize()}")
 
     test_tag = f"{args.tag}-{args.api_type}-wk{args.worker_num}-dn{args.data_num}"
-    logger = get_logger('benchmark', f'{test_tag}-log')
+    logger = get_logger('benchmark', f'{test_tag}.log')
     logger.info(f"args: {args}")
     logger.info(f"test_tag: {test_tag}")
 

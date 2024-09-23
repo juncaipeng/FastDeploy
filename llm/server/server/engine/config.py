@@ -28,6 +28,9 @@ class Config:
 
     def __init__(self):
         self.read_from_env()
+        self.read_from_config()
+        self.postprocess()
+        self.check()
 
     def read_from_env(self):
         """
@@ -130,10 +133,6 @@ class Config:
             )
             self.generation_config = None
 
-        self.read_from_config()
-        self.postprocess()
-        self.check()
-
     def postprocess(self):
         """
         calculate some parameters
@@ -234,3 +233,10 @@ class Config:
 
     def __str__(self) -> str:
         return json.dumps(self.__dict__, indent=4)
+
+cfg_inst = None
+def get_global_config():
+    global cfg_inst
+    if cfg_inst is None:
+        cfg_inst = Config()
+    return cfg_inst

@@ -131,7 +131,7 @@ class TaskQueueManager(object):
         return input_list, read_finish
 
 
-def launch_queue_service(port, num_workers):
+def launch_task_queue_manager(port, num_workers):
     """
     Start the process communication queue service
 
