@@ -43,7 +43,7 @@ class Engine(object):
         self._init_engine_flags()
 
         self.tqm_proc = self._start_task_queue_manager()
-        self.task_queue_manager = TaskQueueManager(mp_num=self.cfg.mp_num, port=self.cfg.infer_port)
+        self.task_queue_manager = TaskQueueManager(mp_num=self.cfg.mp_num, port=self.cfg.infer_queue_port)
 
         start_time = time.time()
         self.infer_proc = self._start_infer_process()
@@ -271,7 +271,7 @@ class Engine(object):
         Returns:
             p: process handle
         """
-        p = multiprocessing.Process(target=launch_task_queue_manager, args=(self.cfg.infer_port, self.cfg.mp_num))
+        p = multiprocessing.Process(target=launch_task_queue_manager, args=(self.cfg.infer_queue_port, self.cfg.mp_num))
         p.start()
         if p.is_alive():
             model_server_logger.info("start tasks queue service successfully")

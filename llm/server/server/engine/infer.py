@@ -29,7 +29,7 @@ from paddlenlp.utils.llm_utils import get_rotary_position_embedding
 from paddlenlp_ops import step_paddle
 
 from server.data.processor import DataProcessor
-from server.engine.config import Config
+from server.engine.config import get_global_config
 from server.utils import get_logger
 from server.engine.task_queue_manager import TaskQueueManager
 
@@ -45,7 +45,7 @@ class ModelRunner:
         # 2**63 - 1
         self.MAX_INFER_SEED = 9223372036854775806
 
-        self.config = Config()
+        self.config = get_global_config()
         self.model_cfg = self.config.get_model_config()
         self.format_print_configuration()
 
@@ -63,7 +63,7 @@ class ModelRunner:
         self.cache_kvs = {}
         self.init_inputs()
 
-        self.infer_queue = TaskQueueManager(rank=self.rank, mp_num=self.nranks, port=self.config.infer_port)
+        self.infer_queue = TaskQueueManager(rank=self.rank, mp_num=self.nranks, port=self.config.infer_queue_port)
 
         model_rank_path = os.path.join(self.args.model_dir, f"rank_{self.rank}")
         if not os.path.exists(model_rank_path):
@@ -354,6 +354,14 @@ class ModelRunner:
         """
         run infer
         """
+        use_custom_health_checker = self.config.use_custom_health_checker
+        if use_custom_health_checker:
+            shm_engine_ready_check_flag_array, engine_ready_check_flag_array = self.initialize_engine_ready_check_flag()
+            engine_ready_check_flag_array[0] = 1
+            shm_engine_healthy_recorded_time_array, engine_healthy_recorded_time_array = self.initialize_engine_healthy_recorded_time_flag()
+            engine_healthy_recorded_time_array[0] = time.time()
+            infer_live_flag_shm = self.initialize_engine_live_flag()
+
         flag_array = np.zeros([1], dtype=np.int32)
         shm_flag_broadcast = shared_memory.SharedMemory(
                         name=self.config.get_unique_name("shm_pd_infer_flag_broadcast"))
@@ -374,13 +382,6 @@ class ModelRunner:
                                                 dtype=flag_array.dtype,
                                                 buffer=shm_flag_has_block_step.buf)
 
-        use_custom_health_checker = self.config.use_custom_health_checker
-        if use_custom_health_checker:
-            shm_engine_ready_check_flag_array, engine_ready_check_flag_array = self.initialize_engine_ready_check_flag()
-            engine_ready_check_flag_array[0] = 1
-            shm_engine_healthy_recorded_time_array, engine_healthy_recorded_time_array = self.initialize_engine_healthy_recorded_time_flag()
-            engine_healthy_recorded_time_array[0] = time.time()
-            infer_live_flag_shm = self.initialize_engine_live_flag()
         infer_seed_increment = paddle.full(shape=[self.args.max_batch_size, 1],
                                             fill_value=4,
                                             dtype="int64")

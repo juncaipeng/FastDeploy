@@ -254,8 +254,7 @@ if __name__ == "__main__":
 
     result_path = f"output/{test_tag}.jsonl"
     if os.path.exists(result_path):
-        logger.error(f"result file ({result_path}) already exists, exit")
-        exit()
+        logger.error(f"result file ({result_path}) already exists, overwrite it")
     if not os.path.exists("output/"):
         os.makedirs("output/")
     logger.info(f"result_path: {result_path}")

@@ -55,8 +55,7 @@ class TritonServer(object):
         Triton initialization
         """
         model_config = json.loads(args["model_config"])
-        using_decoupled = pb_utils.using_decoupled_model_transaction_policy(
-            model_config)
+        using_decoupled = pb_utils.using_decoupled_model_transaction_policy(model_config)
         if not using_decoupled:
             raise pb_utils.TritonModelException(
                 """the model `{}` can generate any number of responses per request,
@@ -71,31 +70,12 @@ class TritonServer(object):
             GAUGE,
         )
         self.metrics = {
-            "batch_size":
-            self.metric_family.Metric(labels={"batch_size": "batch_size"}),
-            "block_num":
-            self.metric_family.Metric(labels={"block_num": "block_num"}),
-            "max_batch_size":
-            self.metric_family.Metric(
-                labels={"max_batch_size": "max_batch_size"}),
-            "max_block_num":
-            self.metric_family.Metric(
-                labels={"max_block_num": "max_block_num"}),
-            "available_resource":
-            self.metric_family.Metric(
-                labels={"available_resource": "available_resource"}),
+            "batch_size": self.metric_family.Metric(labels={"batch_size": "batch_size"}),
+            "block_num": self.metric_family.Metric(labels={"block_num": "block_num"}),
+            "max_batch_size": self.metric_family.Metric(labels={"max_batch_size": "max_batch_size"}),
+            "max_block_num": self.metric_family.Metric(labels={"max_block_num": "max_block_num"}),
+            "available_resource": self.metric_family.Metric(labels={"available_resource": "available_resource"}),
         }
-
-        # if set USE_CUSTOM_HEALTH_CHECKER=1, use custom health checker, need set --allow-http=false
-        # else use tritonserver's health checker, need set --http-port=${HTTP_PORT}
-        use_custom_health_checker = int(os.getenv("USE_CUSTOM_HEALTH_CHECKER", 1))
-        if use_custom_health_checker:
-            http_port = os.getenv("HTTP_PORT")
-            if http_port is None:
-                raise Exception("HTTP_PORT must be set")
-            from server.health_checker import start_health_checker
-            multiprocessing.Process(target=start_health_checker, args=(int(http_port), )).start()
-            time.sleep(1)
 
         self.cfg = get_global_config()
         self.cfg.print(file="log/fastdeploy_init.info")
@@ -103,24 +83,31 @@ class TritonServer(object):
         self.cached_task_deque = deque()
         self.is_stopping = False
 
+        # if set USE_CUSTOM_HEALTH_CHECKER=1, use custom health checker, need set --allow-http=false
+        # else use tritonserver's health checker, need set --http-port=${HTTP_PORT}
+        if self.cfg.use_custom_health_checker:
+            from server.health_checker import start_health_checker
+            multiprocessing.Process(target=start_health_checker, args=(self.cfg.http_port, )).start()
+            time.sleep(1)
+
         self.engine = engine.Engine(self.cfg)
-        model_server_logger.info("Create engine success")
+        model_server_logger.info("create engine success")
 
         self.data_processor = DataProcessor()
         model_server_logger.info("create data processor success")
 
-        insert_task_thread = threading.Thread(target=self._insert_task, args=())
-        insert_task_thread.daemon = True
-        insert_task_thread.start()
+        self.http_proc = None
+        self._launch_http_server()
+        model_server_logger.info("launch push server success")
+
+        schedule_task_thread = threading.Thread(target=self._schedule_task, args=())
+        schedule_task_thread.daemon = True
+        schedule_task_thread.start()
         send_output_thread = threading.Thread(target=self._send_output, args=())
         send_output_thread.daemon = True
         send_output_thread.start()
 
-        self.http_process = None
-        self._launch_http_server()
-
-        model_server_logger.info("Init triton server success")
-
+        model_server_logger.info("init triton server success")
 
     def _launch_http_server(self):
         """
@@ -132,19 +119,18 @@ class TritonServer(object):
         http_py_path = os.path.join(current_dir_path, "http_server", http_py_file)
         http_cmd = f"python3 {http_py_path} --port={self.cfg.push_mode_http_port} " \
                     f"--workers={self.cfg.push_mode_http_workers} >log/launch_http.log 2>&1"
-        model_server_logger.info(f"Launch HTTP server for push mode, command:{http_cmd}")
+        model_server_logger.info(f"launch HTTP server for push mode, command:{http_cmd}")
 
-        self.http_process = subprocess.Popen(http_cmd, shell=True, preexec_fn=os.setsid)
+        self.http_proc = subprocess.Popen(http_cmd, shell=True, preexec_fn=os.setsid)
         time.sleep(3)
-        exit_code = self.http_process.poll()
+        exit_code = self.http_proc.poll()
         if exit_code is None:
             http_url = f"http://127.0.0.1:{self.cfg.push_mode_http_port}/v1/chat/completions"
-            model_server_logger.info(f"Launch HTTP server for push mode success, http_url:{http_url}")
+            model_server_logger.info(f"launch HTTP server for push mode success, http_url:{http_url}")
         else:
             error_msg = "\n Launch HTTP service for push mode failed in 3 seconds. " \
                         "Please check log/launch_http.log file \n"
             model_server_logger.error(error_msg)
-        model_server_logger.info("init push server success")
 
     def execute(self, requests):
         """
@@ -236,35 +222,32 @@ class TritonServer(object):
 
         self._update_metrics()
 
-    def _insert_task(self):
+    def _schedule_task(self):
         """
         Insert task to engine thread, monitor cached_task_deque.
         if the engine has resource, insert task to engine
         """
-        try:
-            while True:
-                if self.engine.available_batch() == 0:
-                    time.sleep(0.001)
-                    continue
-                if len(self.cached_task_deque) == 0:
-                    time.sleep(0.001)
-                    continue
-                if not self.engine.is_queue_empty():
+        while True:
+            try:
+                if self.engine.available_batch() == 0 \
+                    or len(self.cached_task_deque) == 0 \
+                    or (not self.engine.is_queue_empty()):
                     time.sleep(0.001)
                     continue
 
                 i_bs = 0
                 for _ in range(self.cfg.max_prefill_batch):
-                    if len(self.cached_task_deque) == 0:
+                    if len(self.cached_task_deque) == 0 \
+                        or self.engine.available_batch() == 0:
                         break
-                    if self.engine.available_batch() == 0:
-                        break
+
                     while i_bs < self.cfg.max_batch_size:
                         if self.engine.task_is_finished(i_bs):
                             break
                         i_bs += 1
                     if i_bs >= self.cfg.max_batch_size:
                         break
+
                     input_token_num = len(self.cached_task_deque[-1]["input_ids"])
                     if not self.engine.is_resource_sufficient(input_token_num):
                         break
@@ -277,10 +260,9 @@ class TritonServer(object):
                         _send_result({"error_msg": err_msg},
                                     self.req_senders[task["req_id"]], 1)
                         del self.req_senders[task["req_id"]]
-            model_server_logger.info("finish insert_task_push_mode thread")
-        except Exception as e:
-            model_server_logger.error("insert_task_push_mode thread exit "
-                                      f"unexpectedly, {e}. {str(traceback.format_exc())}")
+            except Exception as e:
+                model_server_logger.error(f"schedule task has error: {e}. {str(traceback.format_exc())}")
+        model_server_logger.info("schedule task thread exit")
 
     def _send_output(self):
         """
@@ -298,13 +280,13 @@ class TritonServer(object):
                     if return_all_tokens and "topk_tokens" in result:
                         del result["topk_tokens"]
                     result = self.data_processor.process_response(result)
-                    model_server_logger.debug(f"Send result to client under push mode: {result}")
+                    model_server_logger.debug(f"send result to client under push mode: {result}")
                     _send_result([result], self.req_senders[req_id], is_end)
                     if is_end == 1:
                         del self.req_senders[req_id]
                         self._update_metrics()
             except Exception as e:
-                    model_server_logger.error("Unexcepted error happend: {}, {}".format(e, str(traceback.format_exc())))
+                    model_server_logger.error("unexcepted error happend: {}, {}".format(e, str(traceback.format_exc())))
 
 
     def _update_metrics(self):
@@ -336,8 +318,8 @@ class TritonServer(object):
             time.sleep(5)
 
         del self.engine
-        if self.http_process:
-            self.http_process.kill()
+        if self.http_proc:
+            self.http_proc.kill()
         model_server_logger.info("Triton service is terminated!")
 
 
