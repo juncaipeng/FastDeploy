@@ -54,7 +54,6 @@ class Req(BaseModel):
         Returns:
             dict: request parameters in dict format
         """
-        self.compatible_with_OpenAI()
 
         req_dict = {}
         for key, value in self.dict().items():

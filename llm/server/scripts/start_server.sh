@@ -40,6 +40,19 @@ export METRICS_PORT=${METRICS_PORT:-"8722"}
 export INFER_QUEUE_PORT=${INFER_QUEUE_PORT:-"8813"}
 export PUSH_MODE_HTTP_PORT=${PUSH_MODE_HTTP_PORT:-"9965"}
 
+ports=(${HTTP_PORT} ${GRPC_PORT} ${METRICS_PORT} ${INFER_QUEUE_PORT} ${PUSH_MODE_HTTP_PORT})
+for port in "${ports[@]}"; do
+    output=$(netstat -tuln | grep ":${port} ")
+    if [ -n "$output" ]; then
+        echo "${port} is already in use"
+        exit 1
+    fi
+done
+
+script_dir=$(realpath "$(dirname "${BASH_SOURCE[0]}")")
+root_dir=$(dirname "$script_dir")
+export PYTHONPATH=${root_dir}:${PYTHONPATH}
+
 mkdir -p log
 rm -rf console.log log/*
 rm -rf /dev/shm/*
@@ -49,7 +62,7 @@ echo "start serving ..."
 tritonserver --exit-timeout-secs 100 --cuda-memory-pool-byte-size 0:0 --cuda-memory-pool-byte-size 1:0 \
                  --cuda-memory-pool-byte-size 2:0 --cuda-memory-pool-byte-size 3:0 --cuda-memory-pool-byte-size 4:0 \
                  --cuda-memory-pool-byte-size 5:0 --cuda-memory-pool-byte-size 6:0 --cuda-memory-pool-byte-size 7:0 \
-                 --pinned-memory-pool-byte-size 0 --model-repository llm_model/ \
+                 --pinned-memory-pool-byte-size 0 --model-repository trition_server_model \
                  --allow-http false \
                  --grpc-port=${GRPC_PORT} \
                  --metrics-port=${METRICS_PORT} \

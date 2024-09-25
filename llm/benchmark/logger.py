@@ -1,3 +1,4 @@
+
 # Copyright (c) 2024 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -130,67 +131,30 @@ class DailyRotatingFileHandler(BaseRotatingHandler):
             os.remove(str(self.base_log_path.with_name(file_name)))
 
 
-def get_logger(name, file_name, without_formater=False):
+def get_logger(name, file_name=None):
     """
-    get logger
+    获取logger
     """
-    log_dir = os.getenv("FD_LOG_DIR", default="log")
+    if file_name is None:
+        file_name = name + ".log"
+    log_dir = os.getenv("log_dir", default="output")
     if not os.path.exists(log_dir):
         os.mkdir(log_dir)
 
-    is_debug = int(os.getenv("FD_DEBUG", default=0))
     logger = logging.getLogger(name)
+    is_debug = int(os.getenv("FD_DEBUG", default=0))
     if is_debug:
         logger.setLevel(level=logging.DEBUG)
     else:
         logger.setLevel(level=logging.INFO)
 
-    backup_count = int(os.getenv("FD_LOG_BACKUP_COUNT", 7))
-    handler = DailyRotatingFileHandler("{0}/{1}".format(log_dir, file_name), backupCount=backup_count)
+    log_file = "{0}/{1}".format(log_dir, file_name)
+    handler = DailyRotatingFileHandler(log_file, backupCount=7)
+
     formatter = logging.Formatter(
         "%(levelname)-8s %(asctime)s %(process)-5s %(filename)s[line:%(lineno)d] %(message)s"
     )
-    if not without_formater:
-        handler.setFormatter(formatter)
+    handler.setFormatter(formatter)
     logger.addHandler(handler)
     handler.propagate = False
     return logger
-
-
-def str_to_datetime(date_string):
-    """
-    string to datetime class object
-    """
-    if "." in date_string:
-        return datetime.strptime(date_string, "%Y-%m-%d %H:%M:%S.%f")
-    else:
-        return datetime.strptime(date_string, "%Y-%m-%d %H:%M:%S")
-
-
-def datetime_diff(datetime_start, datetime_end):
-    """
-    Calculate the difference between two dates and times(s)
-
-    Args:
-        datetime_start (Union[str, datetime.datetime]): start time
-        datetime_end (Union[str, datetime.datetime]): end time
-
-    Returns:
-        float: date time difference(s)
-    """
-    if isinstance(datetime_start, str):
-        datetime_start = str_to_datetime(datetime_start)
-    if isinstance(datetime_end, str):
-        datetime_end = str_to_datetime(datetime_end)
-    if datetime_end > datetime_start:
-        cost = datetime_end - datetime_start
-    else:
-        cost = datetime_start - datetime_end
-    return cost.total_seconds()
-
-
-model_server_logger = get_logger("model_server", "infer_server.log")
-http_server_logger = get_logger("http_server", "http_server.log")
-data_processor_logger = get_logger("data_processor", "data_processor.log")
-monitor_logger = get_logger("monitor_logger", "monitor_logger.log", True)
-error_logger = get_logger("error_logger", "error_logger.log", True)

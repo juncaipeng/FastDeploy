@@ -30,7 +30,6 @@ RUN cd /opt/output/Serving/ \
     && cp scripts/start_server.sh . && cp scripts/stop_server.sh . \
     && rm -rf scripts
 
-RUN python3 -m pip install protobuf==3.20.0
-
 ENV http_proxy ""
 ENV https_proxy ""
+ENV TZ=Asia/Shanghai

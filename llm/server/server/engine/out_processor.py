@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import queue
 import threading
 import time
 import traceback
@@ -22,9 +23,10 @@ from datetime import datetime
 import numpy as np
 from paddlenlp_ops import get_output
 from server.utils import datetime_diff, model_server_logger, monitor_logger
+from server.common import get_global_output_queue
 
 
-class TokenProcessor(object):
+class OutProcessor(object):
     """
     get Token/Score from Paddle inference engine
     """
@@ -32,20 +34,17 @@ class TokenProcessor(object):
         import paddle
         paddle.device.set_device("cpu")
         self.cfg = cfg
+        self.out_queue = get_global_output_queue()
         self.resource_manager = None
         # record all tokens for each request
         self.all_tokens = [[] for _ in range(self.cfg.max_batch_size)]
 
         self.tokens_counter = Counter()
         self.output_tokens = paddle.full(shape=[self.cfg.max_batch_size + 2, 1], fill_value=2, dtype="int64")
-        self.worker = None
 
-        self.record_time_interval = int(os.getenv("RECORD_TIME_INTERVAL", "600"))
-        assert self.record_time_interval < 3600, "The RECORD_TIME_INTERVAL cannot exceed 3600."
-        self.statics_start_time = time.time()
-        self.number_of_tasks = 0
-        self.number_of_input_tokens = 0
-        self.number_of_output_tokens = 0
+        self.worker = threading.Thread(target=self.process_sampling_results, args=())
+        self.worker.daemon = True
+        self.worker.start()
 
     def set_resource_manager(self, resource_manager):
         """
@@ -56,18 +55,6 @@ class TokenProcessor(object):
         """
         assert self.resource_manager is None, "The resource manager is not None, cannot set again."
         self.resource_manager = resource_manager
-
-    def run(self):
-        """
-        start thread to get tokens
-        """
-        assert self.resource_manager is not None, "The resource manager is None, cannot run."
-        if self.worker is not None:
-            raise Exception("Worker is already running!")
-
-        self.worker = threading.Thread(target=self.process_sampling_results, args=())
-        self.worker.daemon = True
-        self.worker.start()
 
     def process_sampling_results(self):
         """
@@ -93,13 +80,7 @@ class TokenProcessor(object):
             batch_result (list): batch results
             exist_finished_task (bool): whether there is a finished task
         """
-        result_dir = "./generate_token_results"
-        if not os.path.exists(result_dir):
-            os.makedirs(result_dir)
-        for result in batch_result:
-            result_file = os.path.join(result_dir, result["req_id"])
-            with open(result_file, "a") as f:
-                f.write("{}\n".format(result))
+        self.out_queue.put(batch_result)
 
     def _get_single_result(self, i, task_id, token_id, task):
         """
@@ -198,7 +179,6 @@ class TokenProcessor(object):
             if token_id not in task["eos_token_ids"]:
                 self.all_tokens[i].append(token_id)
 
-            self.number_of_output_tokens += 1
             if token_id in task["eos_token_ids"]:
                 self._recycle_resources(task_id, i, task)
                 model_server_logger.info("req_id: {0} finished".format(task_id))
@@ -207,40 +187,3 @@ class TokenProcessor(object):
             batch_result.append(result)
 
         self.postprocess(batch_result, exist_finished_task)
-
-
-class WarmUpTokenProcessor(TokenProcessor):
-    """
-    Warmup Processor
-    """
-    def __init__(self, cfg):
-        super().__init__(cfg)
-        self._is_running = True
-        self._is_blocking = True
-
-    def postprocess(self, batch_result, exist_finished_task=False):
-        pass
-
-    def process_sampling_results(self):
-        """
-        get output from model and process it
-        """
-        while self._is_running:
-            try:
-                rank_id = 0
-                get_output(self.output_tokens, rank_id, self._is_blocking)
-
-                if self.output_tokens[0, 0] == -2:
-                    continue
-                self._process_batch_output()
-            except Exception as e:
-                model_server_logger.info("while get input_data error: {0} {1}".format(e, str(traceback.format_exc())))
-
-    def stop(self):
-        """
-        stop warm up thread
-        """
-        self._is_running = False
-        self.worker.join()
-        model_server_logger.info("warm up thread stop")
-        del self.worker

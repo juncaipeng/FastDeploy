@@ -21,7 +21,7 @@ from queue import Queue
 
 from server.utils import get_logger
 
-logger = get_logger("infer_server", "task_queue_manager.log")
+logger = get_logger("task_queue_manager", "task_queue_manager.log")
 
 
 class QueueManager(BaseManager):
@@ -53,7 +53,22 @@ class TaskQueueManager(object):
         self.client_manager = QueueManager(address=('127.0.0.1', port),
                                            authkey=b'infer_queue'
                                            )
-        self.client_manager.connect()
+
+        retries = 10
+        delay = 0.5
+        for attempt in range(1, retries + 1):
+            try:
+                self.client_manager.connect()
+                logger.info(f"connect client manager success on attempt {attempt}")
+                break
+            except ConnectionRefusedError:
+                if attempt == retries:
+                    logger.error(f"failed to connect after {retries} attempts.")
+                    raise
+                else:
+                    logger.warning(f"connection attempt {attempt} failed, retrying in {delay} seconds...")
+                    time.sleep(delay)
+
         self.list = self.client_manager.get_list()
         self.value = self.client_manager.get_value()
         self.lock = self.client_manager.get_lock()
@@ -131,7 +146,7 @@ class TaskQueueManager(object):
         return input_list, read_finish
 
 
-def launch_queue_service(port, num_workers):
+def launch_task_queue_manager(port, num_workers):
     """
     Start the process communication queue service
 
@@ -163,3 +178,4 @@ def launch_queue_service(port, num_workers):
     except Exception as e:
         logger.error(f"launch queue service failed, error_msg: {e}")
         raise e
+    logger.error("task queue manager exit")

@@ -17,7 +17,9 @@ import os
 import sys
 from datetime import datetime
 
+import paddle
 from paddlenlp.generation import GenerationConfig
+
 from server.utils import model_server_logger
 
 
@@ -28,23 +30,22 @@ class Config:
 
     def __init__(self):
         self.read_from_env()
+        self.read_from_config()
+        self.postprocess()
+        self.check()
 
     def read_from_env(self):
         """
         get the configuration from environment
         """
         env = os.environ
-        self.model_dir = env.get(
-            "MODEL_DIR", "/opt/output/Serving/models")
+
+        self.model_dir = env.get("MODEL_DIR", "/opt/output/Serving/models")
         if not self.model_dir:
             raise Exception("The parameter MODEL_DIR is None.")
         self.mp_num = int(env.get("MP_NUM", 8))
-        self.config_json_file = env.get("CONFIG_JSON_FILE", "config.json")
-        self.model_config_path = os.path.join(self.model_dir, self.config_json_file)
-        if env.get("FD_MODEL_CONFIG_PATH", None):
-            self.model_config_path = env.get("FD_MODEL_CONFIG_PATH")
-
-        # distributed config
+        self.model_config_path = os.path.join(self.model_dir,
+                                              env.get("CONFIG_JSON_FILE", "config.json"))
         self.distributed_config_path = os.path.join(self.model_dir, "rank_mapping.csv")
         if os.getenv("DISTRIBUTED_CONFIG", None):
             self.distributed_config_path = os.getenv("DISTRIBUTED_CONFIG")
@@ -64,15 +65,16 @@ class Config:
             raise Exception(f"MAX_PREFILL_BATCH ({self.max_prefill_batch}) must be greater than 0")
         self.disable_streaming = int(os.getenv("DISABLE_STREAMING", 0))
 
+        # server ports
+        self.grpc_port = int(os.getenv("GRPC_PORT", 8000))
+        self.http_port = int(os.getenv("HTTP_PORT", 8001))
+        self.metrics_port = int(os.getenv("METRICS_PORT", 8002))
+        self.infer_queue_port = int(os.getenv("INFER_QUEUE_PORT", 8005))
+        # if PUSH_MODE_HTTP_PORT is not configured, only GRPC service is enabled
+        self.push_mode_http_port = int(os.getenv("PUSH_MODE_HTTP_PORT", -1))
+
         # max cached task num
         self.max_cached_task_num = int(os.getenv("MAX_CACHED_TASK_NUM", "128"))
-        # if PUSH_MODE_HTTP_PORT is not configured, only GRPC service is enabled
-        self.push_mode_http_port = int(os.getenv("PUSH_MODE_HTTP_PORT", "-1"))
-        if self.push_mode_http_port > 0:
-            grpc_port = os.getenv("GRPC_PORT", None)
-            if grpc_port is None:
-                raise Exception("GRPC_PORT cannot be None, while PUSH_MODE_HTTP_PORT>0")
-            self.grpc_port = int(grpc_port)
 
         # http worker num
         self.push_mode_http_workers = int(os.getenv("PUSH_MODE_HTTP_WORKERS", "1"))
@@ -80,11 +82,7 @@ class Config:
             raise Exception(f"PUSH_MODE_HTTP_WORKERS ({self.push_mode_http_workers}) must be positive")
 
         # Padlle commit id
-        import paddle
         self.paddle_commit_id = paddle.version.commit
-
-        # time interval for detecting whether the engine loop is normal during probing
-        self.check_health_interval = int(os.getenv("CHECK_HEALTH_INTERVAL", 10))
 
         # model config
         self.dtype = env.get("DTYPE", "bfloat16")
@@ -102,21 +100,20 @@ class Config:
         self.bad_tokens = str(env.get("BAD_TOKENS", "-1"))
         self.first_token_id = int(os.getenv("FIRST_TOKEN_ID", 1))
 
-        # infer queue port
-        self.infer_port = int(os.getenv("INFER_QUEUE_PORT", 56666))
-
-        # whether to use custom health checker
-        self.use_custom_health_checker = int(os.getenv("USE_CUSTOM_HEALTH_CHECKER", 1))
-
         # Check the legality of requests
         self.seq_len_limit = int(env.get("MAX_SEQ_LEN", 8192))
         self.dec_len_limit = int(env.get("MAX_DEC_LEN", 1024))
+
+        # whether to use custom health checker
+        self.use_custom_health_checker = int(os.getenv("USE_CUSTOM_HEALTH_CHECKER", 1))
+        # time interval for detecting whether the engine loop is normal during probing
+        self.check_health_interval = int(os.getenv("CHECK_HEALTH_INTERVAL", 10))
 
         # warmup
         self.use_warmup = int(os.getenv("USE_WARMUP", 0)) == 1
 
         # uuid
-        self.shm_uuid = os.getenv("SHM_UUID", '')
+        self.shm_uuid = os.getenv("SHM_UUID", "")
 
         # use huggingface tokenizer
         self.use_hf_tokenizer = int(os.getenv("USE_HF_TOKENIZER", 0)) == 1
@@ -129,10 +126,6 @@ class Config:
                 "Can't find generation config, so it will not use generation_config field in the model config"
             )
             self.generation_config = None
-
-        self.read_from_config()
-        self.postprocess()
-        self.check()
 
     def postprocess(self):
         """
@@ -234,3 +227,10 @@ class Config:
 
     def __str__(self) -> str:
         return json.dumps(self.__dict__, indent=4)
+
+cfg_inst = None
+def get_global_config():
+    global cfg_inst
+    if cfg_inst is None:
+        cfg_inst = Config()
+    return cfg_inst

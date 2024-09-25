@@ -25,8 +25,8 @@ from multiprocessing import shared_memory
 import numpy as np
 from server.engine.resource_manager import ResourceManager
 from server.engine.task_queue_manager import (TaskQueueManager,
-                                              launch_queue_service)
-from server.engine.token_processor import TokenProcessor, WarmUpTokenProcessor
+                                              launch_task_queue_manager)
+from server.engine.out_processor import OutProcessor
 from server.utils import model_server_logger
 
 
@@ -34,81 +34,25 @@ class Engine(object):
     """
     Engine Class
     """
-    def __init__(self, cfg, token_processor):
+    def __init__(self, cfg):
         self.cfg = cfg
         self.resource_manager = ResourceManager(self.cfg)
-        self.token_processor = token_processor
-        self.token_processor.set_resource_manager(self.resource_manager)
-        self.is_started = False
+        self.out_processor = OutProcessor(self.cfg)
+        self.out_processor.set_resource_manager(self.resource_manager)
 
         self._init_engine_flags()
-        self._finalizer = weakref.finalize(self, self._exit_sub_services)
 
-    def start(self):
-        """
-        initialize engine and start sub services
-        """
-        assert not self.is_started, "The engine is already started.!"
+        self.tqm_proc = self._start_task_queue_manager()
+        self.task_queue_manager = TaskQueueManager(mp_num=self.cfg.mp_num, port=self.cfg.infer_queue_port)
+
         start_time = time.time()
-        self.queue_service = self._start_tasks_queue_service()
-        self.tasks_queue = TaskQueueManager(mp_num=self.cfg.mp_num, port=self.cfg.infer_port)
-
-        self.token_processor.tasks_queue = self.tasks_queue
-        self.infer_proc = self._start_infer_service()
+        self.infer_proc = self._start_infer_process()
         model_server_logger.info("Waitting infer processes ready...")
         while not self._infer_processes_ready():
             time.sleep(1)
-        self.is_started = True
-
-        # start warmup
-        if self.cfg.use_warmup:
-            model_server_logger.info("Start warmup")
-            self._set_warmup_token_processor()
-            self.warmup()
-            self._del_warmup_token_processor()
-            model_server_logger.info("Warmup finish")
-
-        # start TokenProcessor thread
-        self.token_processor.run()
         model_server_logger.info("Infer processes are launched with {} seconds.".format(time.time() - start_time))
 
-    def warmup(self):
-        """
-        construct test tasks and avoid out of memory problem in the infer process
-        """
-        # get eos_token_id
-        from server.data.processor import DataProcessor
-        eos_token_ids = DataProcessor().get_eos_tokens()
-
-       # construct test tasks
-        res_task = []
-        for j in range(2 * self.cfg.max_batch_size):
-            data = {
-                "input_ids": [5],
-                "req_id": j,
-                "max_dec_len": self.cfg.dec_len_limit,
-                "min_dec_len": int(self.cfg.dec_len_limit * 0.5) + 1,
-                "eos_token_ids": eos_token_ids
-            }
-            res_task.append(data)
-        for j in range(2 * self.cfg.max_prefill_batch):
-            data = {
-                "input_ids": [5] * self.cfg.seq_len_limit,
-                "req_id": j + 2 * self.cfg.max_batch_size,
-                "max_dec_len": 1,
-                "min_dec_len": 1,
-                "eos_token_ids": eos_token_ids
-            }
-            res_task.append(data)
-
-        for x in res_task:
-            while self.available_batch() == 0 or not self.insert_tasks([x]):
-                time.sleep(0.0002)
-
-        self.token_processor._is_blocking = False
-        # wait for all tasks finished
-        while not self.all_tasks_finished():
-            time.sleep(1)
+        self._finalizer = weakref.finalize(self, self._exit_sub_services)
 
     def insert_tasks(self, tasks):
         """
@@ -158,13 +102,9 @@ class Engine(object):
         if not tasks:
             return False
 
-        self.token_processor.number_of_tasks += len(tasks)
-        for i in range(len(tasks)):
-            self.token_processor.number_of_input_tokens += len(tasks[i]["input_ids"])
-
         req_ids = [t["req_id"] for t in tasks]
         model_server_logger.info(f"Tasks are sent to engine, req_ids={req_ids}")
-        self.tasks_queue.put((tasks, self.resource_manager.real_bsz))
+        self.task_queue_manager.put((tasks, self.resource_manager.real_bsz))
         return True
 
     def task_is_finished(self, index):
@@ -187,7 +127,7 @@ class Engine(object):
         Returns:
             return: True if empty, False otherwise
         """
-        return self.tasks_queue.empty()
+        return self.task_queue_manager.empty()
 
     def is_resource_sufficient(self, input_token_num):
         """
@@ -227,29 +167,6 @@ class Engine(object):
             return: available block number
         """
         return self.resource_manager.availabel_block_num()
-
-    def _set_warmup_token_processor(self):
-        """
-        set token_processor for warmup
-        """
-        self.token_processor_backup = self.token_processor
-        self.token_processor = WarmUpTokenProcessor(self.cfg)
-        self.token_processor.set_resource_manager(self.resource_manager)
-        self.token_processor.tasks_queue = self.tasks_queue
-
-        # start TokenProcessor thread
-        self.token_processor.run()
-
-    def _del_warmup_token_processor(self):
-        """
-        delete token_processor for warmup
-        """
-        self.token_processor.stop()
-        del self.token_processor
-
-        # reset token_processor
-        self.token_processor = self.token_processor_backup
-        del self.token_processor_backup
 
     def _infer_processes_ready(self):
         """
@@ -341,34 +258,33 @@ class Engine(object):
         """
         exit sub services
         """
-        if hasattr(self, "queue_service") and self.queue_service is not None:
-            self.queue_service.terminate()
-            self.queue_service.join()
+        if hasattr(self, "tqm_proc") and self.tqm_proc is not None:
+            self.tqm_proc.terminate()
+            self.tqm_proc.join()
         if hasattr(self, "infer_proc") and self.infer_proc is not None:
             os.killpg(self.infer_proc.pid, signal.SIGTERM)
 
-    def _start_tasks_queue_service(self):
+    def _start_task_queue_manager(self):
         """
         start tasks queue service
 
         Returns:
             p: process handle
         """
-        p = multiprocessing.Process(target=launch_queue_service, args=(self.cfg.infer_port, self.cfg.mp_num))
+        p = multiprocessing.Process(target=launch_task_queue_manager, args=(self.cfg.infer_queue_port, self.cfg.mp_num))
         p.start()
-        time.sleep(0.3)
         if p.is_alive():
             model_server_logger.info("start tasks queue service successfully")
         else:
-            error_msg = "Failed to start tasks queue service, please check " \
+            error_msg = "Failed to start task queue manager, please check " \
                         "the log/task_queue_manager.log for details"
             model_server_logger.info(error_msg)
             raise Exception(error_msg)
         return p
 
-    def _start_gpu_infer_service(self):
+    def _start_gpu_infer_process(self):
         """
-        start gpu infer service
+        start gpu infer process
 
         Returns:
             p: process handle
@@ -394,8 +310,8 @@ class Engine(object):
         )
         return p
 
-    def _start_infer_service(self):
+    def _start_infer_process(self):
         """
-        start infer service
+        start infer process
         """
-        return self._start_gpu_infer_service()
+        return self._start_gpu_infer_process()
