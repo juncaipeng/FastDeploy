@@ -6,6 +6,7 @@ export PYTHONIOENCODING=utf8
 export LC_ALL=C.UTF-8
 
 # PaddlePaddle environment variables
+#export FLAGS_allocator_strategy=auto_growth
 export FLAGS_allocator_strategy=naive_best_fit
 export FLAGS_fraction_of_gpu_memory_to_use=0.96
 export FLAGS_dynamic_static_unified_comm=0
