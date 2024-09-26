@@ -139,6 +139,19 @@ class ResourceManager(object):
         """
         return len(self.free_list)
 
+    def task_is_finished(self, index):
+        """
+        judge if the task is finished
+
+        Args:
+            index: task index
+
+        Returns:
+            return: True if finished, False otherwise
+        """
+        assert index < len(self.stop_flags)
+        return self.stop_flags[index]
+
     def is_resource_sufficient(self, input_token_num):
         """
         check current available resources meet the new requirements

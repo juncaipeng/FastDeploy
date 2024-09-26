@@ -21,6 +21,8 @@ from collections import Counter
 from datetime import datetime
 
 import numpy as np
+import paddle
+
 from paddlenlp_ops import get_output
 from server.utils import datetime_diff, model_server_logger, monitor_logger
 from server.common import get_global_output_queue
@@ -30,31 +32,21 @@ class OutProcessor(object):
     """
     get Token/Score from Paddle inference engine
     """
-    def __init__(self, cfg):
-        import paddle
-        paddle.device.set_device("cpu")
+    def __init__(self, cfg, resource_manager):
         self.cfg = cfg
+        self.resource_manager = resource_manager
         self.out_queue = get_global_output_queue()
-        self.resource_manager = None
+
         # record all tokens for each request
         self.all_tokens = [[] for _ in range(self.cfg.max_batch_size)]
 
         self.tokens_counter = Counter()
+        paddle.device.set_device("cpu")
         self.output_tokens = paddle.full(shape=[self.cfg.max_batch_size + 2, 1], fill_value=2, dtype="int64")
 
         self.worker = threading.Thread(target=self.process_sampling_results, args=())
         self.worker.daemon = True
         self.worker.start()
-
-    def set_resource_manager(self, resource_manager):
-        """
-        set ResourceManager
-
-        Args:
-            resource_manager (ResourceManager)
-        """
-        assert self.resource_manager is None, "The resource manager is not None, cannot set again."
-        self.resource_manager = resource_manager
 
     def process_sampling_results(self):
         """
@@ -71,16 +63,6 @@ class OutProcessor(object):
                 self._process_batch_output()
             except Exception as e:
                 model_server_logger.info("while get input_data error: {0} {1}".format(e, str(traceback.format_exc())))
-
-    def postprocess(self, batch_result, exist_finished_task=False):
-        """
-        single post-processing function
-
-        Args:
-            batch_result (list): batch results
-            exist_finished_task (bool): whether there is a finished task
-        """
-        self.out_queue.put(batch_result)
 
     def _get_single_result(self, i, task_id, token_id, task):
         """
@@ -186,4 +168,4 @@ class OutProcessor(object):
                 exist_finished_task = True
             batch_result.append(result)
 
-        self.postprocess(batch_result, exist_finished_task)
+        self.out_queue.put(batch_result)

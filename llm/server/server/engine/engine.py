@@ -23,6 +23,7 @@ from datetime import datetime
 from multiprocessing import shared_memory
 
 import numpy as np
+from server.engine.scheduler import Scheduler
 from server.engine.resource_manager import ResourceManager
 from server.engine.task_queue_manager import (TaskQueueManager,
                                               launch_task_queue_manager)
@@ -36,14 +37,14 @@ class Engine(object):
     """
     def __init__(self, cfg):
         self.cfg = cfg
-        self.resource_manager = ResourceManager(self.cfg)
-        self.out_processor = OutProcessor(self.cfg)
-        self.out_processor.set_resource_manager(self.resource_manager)
 
         self._init_engine_flags()
 
         self.tqm_proc = self._start_task_queue_manager()
-        self.task_queue_manager = TaskQueueManager(mp_num=self.cfg.mp_num, port=self.cfg.infer_queue_port)
+
+        self.resource_manager = ResourceManager(self.cfg)
+        self.scheduler = Scheduler(self.cfg, self.resource_manager)
+        self.out_processor = OutProcessor(self.cfg, self.resource_manager)
 
         start_time = time.time()
         self.infer_proc = self._start_infer_process()
@@ -54,92 +55,12 @@ class Engine(object):
 
         self._finalizer = weakref.finalize(self, self._exit_sub_services)
 
-    def insert_tasks(self, tasks):
+    def add_task(self, task):
         """
-        insert tasks to the engine
-
-        Args:
-            tasks: list of tasks
-
-        Returns:
-            return: True if success, False otherwise
+        add task to scheduler
         """
-        if not isinstance(tasks, list):
-            tasks = [tasks]
+        self.scheduler.add_task(task)
 
-        for item in tasks:
-            item["schedule_start_time"] = datetime.now()
-
-        available_batch = np.sum(self.resource_manager.stop_flags)
-        if len(tasks) > available_batch:
-            model_server_logger.error("Inserting batch:{} exceeds the available batch:{}.".format(
-                len(tasks), available_batch))
-            model_server_logger.error("The exceeded part will be ignored!")
-            tasks = tasks[:available_batch]
-
-        for i in range(len(tasks)):
-            req_id = tasks[i]["req_id"]
-            input_token_num = len(tasks[i]["input_ids"])
-            if input_token_num >= self.cfg.max_seq_len - 1:
-                model_server_logger.warning(f"{req_id}: Input length:{input_token_num}, exceed the limits.")
-                tasks[i]["input_ids"] = tasks[i]["input_ids"][:self.cfg.max_seq_len - 1]
-            if "seq_len" in tasks[i] and "max_dec_len" not in tasks[i]:
-                tasks[i]["max_dec_len"] = tasks[i]["seq_len"]
-
-            # max_dec_len + input_token_num > MAX_SEQ_LEN
-            if input_token_num + tasks[i]["max_dec_len"] > self.cfg.max_seq_len:
-                tasks[i]["max_dec_len"] = self.cfg.max_seq_len - input_token_num
-                model_server_logger.warning("Force max_dec_len to be {} for req_id={}.".format(
-                    tasks[i]["max_dec_len"], tasks[i]["req_id"]))
-
-            # min_dec_len + input_token_num > MAX_SEQ_LEN
-            if input_token_num + tasks[i]["min_dec_len"] > self.cfg.max_seq_len:
-                tasks[i]["min_dec_len"] = self.cfg.max_seq_len - input_token_num
-                model_server_logger.warning("Force min_dec_len to be {} for req_id={}.".format(
-                    tasks[i]["min_dec_len"], tasks[i]["req_id"]))
-
-        tasks = self.resource_manager.allocate_resources_for_new_tasks(tasks)
-        if not tasks:
-            return False
-
-        req_ids = [t["req_id"] for t in tasks]
-        model_server_logger.info(f"Tasks are sent to engine, req_ids={req_ids}")
-        self.task_queue_manager.put((tasks, self.resource_manager.real_bsz))
-        return True
-
-    def task_is_finished(self, index):
-        """
-        judge if the task is finished
-
-        Args:
-            index: task index
-
-        Returns:
-            return: True if finished, False otherwise
-        """
-        assert index < len(self.resource_manager.stop_flags)
-        return self.resource_manager.stop_flags[index]
-
-    def is_queue_empty(self):
-        """
-        judge if the queue is empty
-
-        Returns:
-            return: True if empty, False otherwise
-        """
-        return self.task_queue_manager.empty()
-
-    def is_resource_sufficient(self, input_token_num):
-        """
-        judge if the resource is sufficient
-
-        Args:
-            input_token_num: input token number
-
-        Returns:
-            return: True if sufficient, False otherwise
-        """
-        return self.resource_manager.is_resource_sufficient(input_token_num)
 
     def all_tasks_finished(self):
         """
@@ -150,23 +71,13 @@ class Engine(object):
         """
         return np.sum(self.resource_manager.stop_flags) == len(self.resource_manager.stop_flags)
 
-    def available_batch(self):
+    def metrics_info(self):
         """
-        available batch size of the engine
-
-        Returns:
-            return: available batch size
+        get metrics info from resource manager
         """
-        return self.resource_manager.available_batch()
-
-    def available_block_num(self):
-        """
-        available block number of the engine
-
-        Returns:
-            return: available block number
-        """
-        return self.resource_manager.availabel_block_num()
+        info = {"available_batch": self.resource_manager.available_batch(),
+                "available_block_num": self.resource_manager.availabel_block_num(),}
+        return info
 
     def _infer_processes_ready(self):
         """

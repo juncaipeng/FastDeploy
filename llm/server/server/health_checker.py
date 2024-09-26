@@ -25,7 +25,7 @@ import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
-from server.engine.config import get_global_config
+from server.config import get_global_config
 from server.utils import get_logger
 
 app = FastAPI()

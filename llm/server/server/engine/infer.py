@@ -29,7 +29,7 @@ from paddlenlp.utils.llm_utils import get_rotary_position_embedding
 from paddlenlp_ops import step_paddle
 
 from server.data.processor import DataProcessor
-from server.engine.config import get_global_config
+from server.config import get_global_config
 from server.utils import get_logger
 from server.engine.task_queue_manager import TaskQueueManager
 

@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 
 from paddlenlp.transformers import Llama3Tokenizer, LlamaTokenizer
 from paddlenlp.utils.llm_utils import get_eos_token_id
-from server.engine.config import Config
+from server.config import Config
 from server.utils import data_processor_logger
 
 
