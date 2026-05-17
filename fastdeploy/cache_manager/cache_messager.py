@@ -684,6 +684,24 @@ class CacheMessagerV1:
             try:
                 batch_engine_signals = self.cache_prefilled_engine_ids_queue.get()
                 self.engine_worker_queue.begin_send_cache_barrier.wait()
+
+                # Storage pool mode: skip RDMA/IPC transfer, immediately notify completion
+                if envs.FD_PD_TRANSFER_VIA_STORAGE:
+                    with self.engine_cache_task_thread_lock:
+                        for engine_idx, _ in batch_engine_signals:
+                            self._maybe_wait_for_cache_task(engine_idx)
+                            task = self.idx_cache_task_dict[engine_idx]
+                            task["status"] = "finished"
+                            logger.info(
+                                f"[PD Storage] Skip RDMA transfer, mark as finished, " f"req_id: {task['request_id']}"
+                            )
+                            self.engine_worker_queue.finish_send_cache_barrier.wait()
+                            self.engine_worker_queue.put_finished_req([[task["request_id"], task["status"]]])
+                            self.engine_cache_tasks[task["current_id"]] = dict()
+                            del self.cache_info[task["request_id"]]
+                            del self.idx_cache_task_dict[task["current_id"]]
+                    continue
+
                 block_start_end_list = []
                 current_prefilled_token_num_list = []
                 for engine_index, current_step_prefilled_token_num in batch_engine_signals:
@@ -849,6 +867,20 @@ class CacheMessagerV1:
             except Exception as e:
                 logger.error(f"prefill layerwise send cache thread has exception: {e} {traceback.format_exc()!s}")
                 time.sleep(0.01)
+
+    def _maybe_wait_for_cache_task(self, engine_index):
+        """Wait until cache task is available for the given engine_index."""
+        wait_step = 1
+        sleep_seconds = 0.005
+
+        while engine_index not in self.idx_cache_task_dict:
+            time.sleep(sleep_seconds)
+            wait_step += 1
+
+            if wait_step % 400 == 0:
+                logger.warning(
+                    f"waiting cache task for engine_index: {engine_index}, cost_time: {wait_step * 0.005:.2f} s"
+                )
 
     def consume_signals(self):
         paddle.device.set_device("cpu")

@@ -1709,7 +1709,12 @@ class ResourceManagerV1(ResourceManager):
             # Do not block the main thread here
             # Write cache to storage if kvcache_storage_backend is enabled
             for req in need_postprocess_reqs:
-                if self.config.scheduler_config.splitwise_role == "decode":
+                if envs.FD_PD_TRANSFER_VIA_STORAGE:
+                    # Storage pool mode: P already writes cache in token_processor before notifying D,
+                    # only D needs to write here (including output tokens generated during decode)
+                    if self.config.scheduler_config.splitwise_role == "decode":
+                        self.cache_manager.write_all_cache_to_storage(req)
+                elif self.config.scheduler_config.splitwise_role == "decode":
                     # D instance uses simplified write method (does not rely on Radix Tree)
                     self.cache_manager.write_cache_to_storage_decode(req)
                 else:
